@@ -328,7 +328,7 @@ function renderInventory(inventory) {
 
             <b>
               ${escapeHtml(
-                product.canonical_name
+                item.product_name
               )}
             </b>
 
@@ -337,7 +337,7 @@ function renderInventory(inventory) {
               ${money(row.price)}
               /
               ${escapeHtml(
-                product.default_unit || ""
+                item.unit || ""
               )}
 
             </div>

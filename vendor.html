@@ -1,1 +1,439 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vendor Desk</title><link rel="stylesheet" href="styles.css"></head><body><main><div class="top"><span class="pill">Vendor desk</span><a href="index.html" class="btn ghost">Customer</a></div><h1>Good morning, Raju.</h1><p class="muted">Update once. Pack clean orders. Avoid unnecessary calls.</p><section class="card"><h2>What's different today?</h2><button class="btn voice" disabled>🎙 Speak today's changes — coming next</button><textarea rows="3" placeholder="Tamatar 48. Bhindi nahi hai. Palak 20. Baaki same."></textarea><button class="btn ghost" onclick="review.hidden=false">Review changes</button><div id="review" hidden><div class="row"><span>Tomato</span><b>₹48/kg</b></div><div class="row"><span>Bhindi</span><b>Sold out</b></div><div class="row"><span>Palak</span><b>₹20/bunch</b></div><button class="btn full" style="margin-top:12px">Confirm & publish</button></div></section><section class="card"><h2>Orders to pack</h2><p class="muted">Live order queue will connect to the existing Supabase commerce engine.</p><div class="row"><span>No calls. No rewriting.</span><b>CORE FLOW</b></div></section><section class="card"><h2>Pilot metric</h2><b>Orders completed without merchant communication</b></section></main></body></html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Raju — Vendor Desk</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+<main>
+
+  <div class="top">
+    <span class="pill">Vendor desk</span>
+    <a href="index.html" class="btn ghost">Customer view</a>
+  </div>
+
+  <h1>Raju Fresh Vegetables</h1>
+
+  <p class="muted">
+    Pack orders. Deliver. Keep today's stock accurate.
+  </p>
+
+
+  <section class="card">
+
+    <h2>Today's orders</h2>
+
+    <p id="orderStatus" class="muted">
+      Loading orders…
+    </p>
+
+    <div id="orders"></div>
+
+  </section>
+
+
+  <section class="card">
+
+    <h2>Today's inventory</h2>
+
+    <p class="muted">
+      Live stock after customer orders.
+    </p>
+
+    <div id="inventory">
+      Loading inventory…
+    </div>
+
+  </section>
+
+</main>
+
+
+<script>
+
+const API =
+  "https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/vendor-api";
+
+
+const money = (n) =>
+  `₹${Number(n || 0).toFixed(0)}`;
+
+
+function escapeHtml(value) {
+
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+
+}
+
+
+async function loadVendor() {
+
+  const response =
+    await fetch(`${API}?merchant=raju`);
+
+  const data =
+    await response.json();
+
+  if (!response.ok)
+    throw new Error(
+      data.error || "Could not load vendor desk"
+    );
+
+  renderOrders(data.orders || []);
+
+  renderInventory(
+    data.inventory || []
+  );
+
+}
+
+
+function renderOrders(orders) {
+
+  const box =
+    document.getElementById("orders");
+
+  const status =
+    document.getElementById("orderStatus");
+
+
+  if (!orders.length) {
+
+    status.textContent =
+      "No orders yet.";
+
+    box.innerHTML = "";
+
+    return;
+
+  }
+
+
+  status.textContent =
+    `${orders.length} order${orders.length === 1 ? "" : "s"}`;
+
+
+  box.innerHTML =
+    orders.map(order => {
+
+
+      const customer =
+        order.customers || {};
+
+
+      const items =
+        (order.order_items || [])
+        .map(item => {
+
+          const product =
+            item.products || {};
+
+          return `
+            <div class="row">
+              <span>
+                ${escapeHtml(product.canonical_name)}
+                ×
+                ${escapeHtml(item.quantity)}
+                ${escapeHtml(product.default_unit || "")}
+              </span>
+
+              <b>
+                ${money(
+                  Number(item.quantity) *
+                  Number(item.unit_price)
+                )}
+              </b>
+            </div>
+          `;
+
+        })
+        .join("");
+
+
+      let action = "";
+
+
+      if (
+        order.status !== "packed" &&
+        order.status !== "delivered"
+      ) {
+
+        action = `
+          <button
+            class="btn full"
+            onclick="updateStatus(
+              '${order.id}',
+              'packed'
+            )"
+          >
+            Packed
+          </button>
+        `;
+
+      }
+
+
+      if (order.status === "packed") {
+
+        action = `
+          <button
+            class="btn full"
+            onclick="updateStatus(
+              '${order.id}',
+              'delivered'
+            )"
+          >
+            Delivered
+          </button>
+        `;
+
+      }
+
+
+      if (order.status === "delivered") {
+
+        action = `
+          <p class="muted">
+            ✓ Delivered
+          </p>
+        `;
+
+      }
+
+
+      return `
+
+        <div class="card">
+
+          <div class="row">
+
+            <b>
+              #${escapeHtml(
+                order.order_number
+              )}
+            </b>
+
+            <span class="pill">
+              ${escapeHtml(
+                order.status || "new"
+              )}
+            </span>
+
+          </div>
+
+
+          <h3>
+            ${escapeHtml(
+              customer.name ||
+              "Customer"
+            )}
+          </h3>
+
+
+          <p class="muted">
+
+            ${escapeHtml(
+              customer.address || ""
+            )}
+
+            <br>
+
+            ${escapeHtml(
+              customer.phone || ""
+            )}
+
+          </p>
+
+
+          ${items}
+
+
+          <div class="row">
+
+            <b>Total</b>
+
+            <b>
+              ${money(
+                order.total_amount
+              )}
+            </b>
+
+          </div>
+
+
+          <p class="muted">
+            Payment:
+            ${escapeHtml(
+              order.payment_method || ""
+            )}
+          </p>
+
+
+          ${action}
+
+        </div>
+
+      `;
+
+    }).join("");
+
+}
+
+
+function renderInventory(inventory) {
+
+  const box =
+    document.getElementById(
+      "inventory"
+    );
+
+
+  if (!inventory.length) {
+
+    box.innerHTML =
+      `<p class="muted">
+        No inventory found.
+      </p>`;
+
+    return;
+
+  }
+
+
+  box.innerHTML =
+    inventory.map(row => {
+
+      const product =
+        row.products || {};
+
+      const available =
+        row.is_available &&
+        Number(row.available_qty) > 0;
+
+
+      return `
+
+        <div class="row">
+
+          <div>
+
+            <b>
+              ${escapeHtml(
+                product.canonical_name
+              )}
+            </b>
+
+            <div class="muted">
+
+              ${money(row.price)}
+              /
+              ${escapeHtml(
+                product.default_unit || ""
+              )}
+
+            </div>
+
+          </div>
+
+
+          <div>
+
+            ${
+              available
+              ?
+              `${escapeHtml(
+                row.available_qty
+              )} available`
+              :
+              "Sold out"
+            }
+
+          </div>
+
+        </div>
+
+      `;
+
+    }).join("");
+
+}
+
+
+async function updateStatus(
+  orderId,
+  newStatus
+) {
+
+  try {
+
+    const response =
+      await fetch(API, {
+
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body: JSON.stringify({
+
+          action: "status",
+
+          order_id: orderId,
+
+          status: newStatus
+
+        })
+
+      });
+
+
+    const data =
+      await response.json();
+
+
+    if (!response.ok)
+      throw new Error(
+        data.error ||
+        "Could not update order"
+      );
+
+
+    await loadVendor();
+
+
+  } catch (error) {
+
+    alert(
+      error.message ||
+      "Could not update order."
+    );
+
+  }
+
+}
+
+
+loadVendor().catch(error => {
+
+  document.getElementById(
+    "orderStatus"
+  ).textContent =
+    error.message;
+
+});
+
+</script>
+
+</body>
+</html>

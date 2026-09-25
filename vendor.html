@@ -140,10 +140,10 @@ function renderOrders(orders) {
           return `
             <div class="row">
               <span>
-                ${escapeHtml(product.canonical_name)}
+                ${escapeHtml(item.product_name)}
                 ×
                 ${escapeHtml(item.quantity)}
-                ${escapeHtml(product.default_unit || "")}
+                ${escapeHtml(item.unit || "")}
               </span>
 
               <b>
@@ -263,7 +263,7 @@ function renderOrders(orders) {
 
             <b>
               ${money(
-                order.total_amount
+                order.total
               )}
             </b>
 

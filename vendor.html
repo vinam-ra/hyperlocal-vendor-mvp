@@ -770,81 +770,102 @@ async function updateStatus(
 
 }
 
-function startVendorVoice() {
+let vendorRecorder = null;
+let vendorAudioChunks = [];
+let vendorRecording = false;
 
-  const SpeechRecognition =
-    window.SpeechRecognition ||
-    window.webkitSpeechRecognition;
+async function startVendorVoice() {
+  const status = document.getElementById("voiceStatus");
+  const button = document.getElementById("voiceDelta");
 
-  const status =
-    document.getElementById("voiceStatus");
-
-  const button =
-    document.getElementById("voiceDelta");
-
-  if (!SpeechRecognition) {
-    status.textContent =
-      "Voice isn't supported in this browser. Type the update instead.";
+  // Second click = stop recording and transcribe
+  if (vendorRecording && vendorRecorder) {
+    button.textContent = "⏳ Transcribing…";
+    status.textContent = "Understanding today's changes…";
+    vendorRecorder.stop();
     return;
   }
 
-  const recognition = new SpeechRecognition();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true
+    });
 
-  recognition.lang = "en-IN";
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
+    vendorAudioChunks = [];
 
-  button.textContent = "🎙 Listening…";
-  status.textContent = "Speak today's changes naturally.";
+    const preferredType =
+      MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
 
-  recognition.onresult = event => {
+    vendorRecorder = new MediaRecorder(stream, {
+      mimeType: preferredType
+    });
 
-    const transcript =
-      event.results[0][0].transcript;
+    vendorRecorder.ondataavailable = event => {
+      if (event.data.size > 0) {
+        vendorAudioChunks.push(event.data);
+      }
+    };
 
-    document.getElementById(
-      "deltaInput"
-    ).value = transcript;
+    vendorRecorder.onstop = async () => {
+      vendorRecording = false;
+      stream.getTracks().forEach(track => track.stop());
 
+      try {
+        const audioBlob = new Blob(vendorAudioChunks, {
+          type: vendorRecorder.mimeType
+        });
+
+        const form = new FormData();
+        form.append("file", audioBlob, "vendor-update.webm");
+
+        const response = await fetch(
+          "https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/voice-transcribe",
+          {
+            method: "POST",
+            body: form
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.detail || data.error || "Transcription failed"
+          );
+        }
+
+        const transcript = (data.transcript || "").trim();
+
+        if (!transcript) {
+          throw new Error("No speech was detected.");
+        }
+
+        document.getElementById("deltaInput").value = transcript;
+
+        status.textContent = `Heard: "${transcript}"`;
+        button.textContent = "🎙 Tap to speak";
+
+        previewDelta();
+
+      } catch (error) {
+        status.textContent = `Voice error: ${error.message}`;
+        button.textContent = "🎙 Tap to speak";
+      }
+    };
+
+    vendorRecorder.start();
+    vendorRecording = true;
+
+    button.textContent = "⏹ Stop & understand";
     status.textContent =
-      `Heard: "${transcript}"`;
+      "Listening… Speak naturally, then tap stop.";
 
-    button.textContent =
-      "🎙 Tap to speak";
-
-    previewDelta();
-  };
-
-  recognition.onerror = event => {
-
+  } catch (error) {
+    vendorRecording = false;
+    button.textContent = "🎙 Tap to speak";
     status.textContent =
-      `Voice error: ${event.error}`;
-
-    button.textContent =
-      "🎙 Tap to speak";
-  };
-
-  recognition.onend = () => {
-    button.textContent =
-      "🎙 Tap to speak";
-  };
-
-  recognition.start();
+      `Microphone error: ${error.message}`;
+  }
 }
-/* -----------------------------
-   START
------------------------------ */
-
-loadVendor().catch(error => {
-
-  document.getElementById(
-    "orderStatus"
-  ).textContent =
-    error.message;
-
-});
-
-</script>
-
-</body>
-</html>

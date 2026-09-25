@@ -1,443 +1,871 @@
-You are working on the repository:
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Raju — Vendor Desk</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
 
-vinam-ra/hyperlocal-vendor-mvp
+<body>
+<main>
 
-Do not redesign or rebuild the application.
+  <div class="top">
+    <span class="pill">Vendor desk</span>
+    <a href="index.html" class="btn ghost">Customer view</a>
+  </div>
 
-Your job is to upgrade the existing vendor voice-input system while preserving all currently working functionality.
+  <h1>Raju Fresh Vegetables</h1>
 
-PRODUCT CONTEXT
+  <p class="muted">
+    Pack orders. Deliver. Keep today's stock accurate.
+  </p>
 
-This is a hyperlocal ordering MVP for neighborhood vendors such as vegetable sellers.
+  <!-- MORNING UPDATE -->
 
-Core workflow:
+  <section class="card">
 
-Vendor:
-morning inventory update → customer orders → vendor packs → delivers
+    <h2>What's different today?</h2>
 
-Customer:
-view today's inventory → order → checkout
+    <p class="muted">
+      Only tell us what changed. Everything else stays the same.
+    </p>
 
-The core product principle is:
+    <textarea
+      id="deltaInput"
+      rows="3"
+      style="width:100%;box-sizing:border-box;margin:10px 0;"
+      placeholder="Example: Tomato 48, Bhindi sold out, Palak 20"
+    ></textarea>
+<button
+  id="voiceDelta"
+  class="btn full"
+  style="margin-bottom:10px;"
+  onclick="startVendorVoice()"
+>
+  🎙 Tap to speak
+</button>
 
-AI interprets.
-Deterministic software decides stock, price, totals and inventory.
+<p id="voiceStatus" class="muted"></p>
+    <button
+      class="btn full"
+      onclick="previewDelta()"
+    >
+      Review changes
+    </button>
 
-Existing working functionality MUST NOT be broken:
+    <div id="deltaReview"></div>
 
-- Supabase backend
-- vendor inventory
-- daily inventory delta
-- customer storefront
-- order placement
-- inventory decrement
-- vendor order display
-- Packed → Delivered status
-- existing deterministic previewDelta()
-- existing Confirm & Publish flow
-- existing vendor/customer navigation
+    <button
+      id="publishDelta"
+      class="btn full"
+      style="display:none;margin-top:10px;"
+      onclick="publishDelta()"
+    >
+      Confirm & publish
+    </button>
 
-Do not change the database schema.
+    <p
+      id="deltaMsg"
+      class="muted"
+    ></p>
 
---------------------------------------------------
-CURRENT VOICE ARCHITECTURE
---------------------------------------------------
+  </section>
 
-The vendor page is:
 
-vendor.html
+  <!-- ORDERS -->
 
-It currently contains a button:
+  <section class="card">
 
-id="voiceDelta"
+    <h2>Today's orders</h2>
 
-and status element:
+    <p id="orderStatus" class="muted">
+      Loading orders…
+    </p>
 
-id="voiceStatus"
+    <div id="orders"></div>
 
-and inventory-update textarea:
+  </section>
 
-id="deltaInput"
 
-There is an existing:
+  <!-- INVENTORY -->
 
-startVendorVoice()
+  <section class="card">
 
-function.
+    <h2>Today's inventory</h2>
 
-The current browser SpeechRecognition implementation and/or older MediaRecorder implementation should be replaced.
+    <p class="muted">
+      Live stock after customer orders.
+    </p>
 
-DO NOT use:
+    <div id="inventory">
+      Loading inventory…
+    </div>
 
-window.SpeechRecognition
-window.webkitSpeechRecognition
+  </section>
 
-We no longer want browser speech-to-text.
+</main>
 
---------------------------------------------------
-BACKEND TRANSCRIPTION
---------------------------------------------------
 
-A Supabase Edge Function already exists:
+<script>
 
-https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/voice-transcribe
+const API =
+  "https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/vendor-api";
 
-The OPENAI_API_KEY is stored securely on the backend.
+const money = n =>
+  `₹${Number(n || 0).toFixed(0)}`;
 
-Never expose an OpenAI API key in frontend code.
 
-The Edge Function accepts:
+function escapeHtml(value) {
 
-POST multipart/form-data
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 
-with:
-
-file = recorded audio
-
-It returns JSON approximately:
-
-{
-  "transcript": "..."
 }
 
-The backend uses OpenAI transcription.
 
---------------------------------------------------
-REQUIRED VENDOR VOICE UX
---------------------------------------------------
+/* -----------------------------
+   LOAD VENDOR
+----------------------------- */
 
-Implement reliable push-to-record voice input.
+async function loadVendor() {
 
-Desired flow:
+  const response =
+    await fetch(`${API}?merchant=raju`);
 
-1. Vendor taps:
+  const data =
+    await response.json();
 
-🎙 Tap to speak
+  if (!response.ok)
+    throw new Error(
+      data.error ||
+      "Could not load vendor desk"
+    );
 
-2. Browser asks for microphone permission if necessary.
+  renderOrders(data.orders || []);
+  renderInventory(data.inventory || []);
 
-3. Recording begins.
+}
 
-4. Button changes to:
 
-⏹ Stop recording
+/* -----------------------------
+   ORDERS
+----------------------------- */
 
-5. Status visibly shows a timer:
+function renderOrders(orders) {
 
-🔴 Recording — 0:00
-🔴 Recording — 0:01
-🔴 Recording — 0:02
-...
+  const box =
+    document.getElementById("orders");
 
-6. Recording MUST continue through natural pauses and silence.
+  const status =
+    document.getElementById("orderStatus");
 
-DO NOT implement silence detection.
 
-DO NOT automatically stop recording.
+  if (!orders.length) {
 
-Recording should stop ONLY when the vendor explicitly taps:
+    status.textContent =
+      "No orders yet.";
 
-⏹ Stop recording
+    box.innerHTML = "";
 
-7. When Stop is tapped:
+    return;
 
-- flush final MediaRecorder data
-- stop recorder
-- stop microphone tracks
-- disable button temporarily
-- show:
+  }
 
-⏳ Understanding…
 
-8. Upload the COMPLETE audio recording to:
+  status.textContent =
+    `${orders.length} order${orders.length === 1 ? "" : "s"}`;
 
-https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/voice-transcribe
 
-using FormData.
+  box.innerHTML =
+    orders.map(order => {
 
-9. Read:
+      const customer =
+        order.customers || {};
 
-data.transcript
 
-10. Put the transcript into:
+      const items =
+        (order.order_items || [])
+        .map(item => `
 
-document.getElementById("deltaInput").value
+          <div class="row">
 
-11. Display:
+            <span>
 
-Heard: "<transcript>"
+              ${escapeHtml(
+                item.product_name
+              )}
 
-12. Automatically call the EXISTING:
+              ×
 
-previewDelta()
+              ${escapeHtml(
+                item.quantity
+              )}
 
-Do not rewrite previewDelta() in this task.
+              ${escapeHtml(
+                item.unit || ""
+              )}
 
-13. Restore button:
+            </span>
 
-🎙 Tap to speak
+            <b>
+              ${money(
+                item.line_total ??
+                Number(item.quantity) *
+                Number(item.unit_price)
+              )}
+            </b>
 
---------------------------------------------------
-MEDIARECORDER REQUIREMENTS
---------------------------------------------------
+          </div>
 
-Use:
+        `)
+        .join("");
 
-navigator.mediaDevices.getUserMedia()
 
-Request audio with:
+      let action = "";
 
-echoCancellation: true
-noiseSuppression: true
-autoGainControl: true
 
-Use MediaRecorder.
+      if (
+        order.status !== "packed" &&
+        order.status !== "delivered"
+      ) {
 
-Prefer:
+        action = `
 
-audio/webm;codecs=opus
+          <button
+            class="btn full"
+            onclick="updateStatus(
+              '${order.id}',
+              'packed'
+            )"
+          >
+            Packed
+          </button>
 
-when supported.
+        `;
 
-Otherwise allow the browser to choose an appropriate MediaRecorder format.
+      }
 
-Record using timesliced chunks:
 
-vendorRecorder.start(1000)
+      if (order.status === "packed") {
 
-Store all non-empty chunks.
+        action = `
 
-When the user presses Stop:
+          <button
+            class="btn full"
+            onclick="updateStatus(
+              '${order.id}',
+              'delivered'
+            )"
+          >
+            Delivered
+          </button>
 
-call requestData() if available
+        `;
 
-then stop the MediaRecorder safely.
+      }
 
-Ensure the final audio chunk is included.
 
-Create one Blob from ALL chunks.
+      if (order.status === "delivered") {
 
-Reject obviously empty/very tiny recordings with a useful message.
+        action = `
+          <p class="muted">
+            ✓ Delivered
+          </p>
+        `;
 
-Do not allow overlapping recordings.
+      }
 
-Always stop microphone tracks after recording.
 
-Clean up timers on success and error.
+      return `
 
---------------------------------------------------
-STATE
---------------------------------------------------
+        <div class="card">
 
-Use clear state variables such as:
+          <div class="row">
+
+            <b>
+              #${escapeHtml(
+                order.order_number
+              )}
+            </b>
+
+            <span class="pill">
+              ${escapeHtml(
+                order.status || "new"
+              )}
+            </span>
+
+          </div>
+
+
+          <h3>
+            ${escapeHtml(
+              customer.name ||
+              "Customer"
+            )}
+          </h3>
+
+
+          <p class="muted">
+
+            ${escapeHtml(
+              customer.address || ""
+            )}
+
+            <br>
+
+            ${escapeHtml(
+              customer.phone || ""
+            )}
+
+          </p>
+
+
+          ${items}
+
+
+          <div class="row">
+
+            <b>Total</b>
+
+            <b>
+              ${money(order.total)}
+            </b>
+
+          </div>
+
+
+          <p class="muted">
+
+            Payment:
+            ${escapeHtml(
+              order.payment_method || ""
+            )}
+
+          </p>
+
+
+          ${action}
+
+        </div>
+
+      `;
+
+    }).join("");
+
+}
+
+
+/* -----------------------------
+   INVENTORY
+----------------------------- */
+
+function renderInventory(inventory) {
+
+  const box =
+    document.getElementById(
+      "inventory"
+    );
+
+
+  if (!inventory.length) {
+
+    box.innerHTML = `
+      <p class="muted">
+        No inventory found.
+      </p>
+    `;
+
+    return;
+
+  }
+
+
+  box.innerHTML =
+    inventory.map(row => {
+
+      const product =
+        row.products || {};
+
+      const available =
+        row.is_available &&
+        Number(row.available_qty) > 0;
+
+
+      return `
+
+        <div class="row">
+
+          <div>
+
+            <b>
+              ${escapeHtml(
+                product.canonical_name
+              )}
+            </b>
+
+            <div class="muted">
+
+              ${money(row.price)}
+              /
+              ${escapeHtml(
+                product.default_unit || ""
+              )}
+
+            </div>
+
+          </div>
+
+
+          <div>
+
+            ${
+              available
+
+              ? `${escapeHtml(
+                  row.available_qty
+                )} available`
+
+              : "Sold out"
+            }
+
+          </div>
+
+        </div>
+
+      `;
+
+    }).join("");
+
+}
+
+
+/* -----------------------------
+   MORNING UPDATE
+----------------------------- */
+
+let pendingChanges = [];
+
+
+function previewDelta() {
+
+  const input =
+    document
+      .getElementById("deltaInput")
+      .value
+      .trim();
+
+  const review =
+    document.getElementById(
+      "deltaReview"
+    );
+
+  const publish =
+    document.getElementById(
+      "publishDelta"
+    );
+
+  const inventoryRows =
+    [...document.querySelectorAll(
+      "#inventory .row"
+    )];
+
+  const names =
+    inventoryRows
+      .map(row =>
+        row.querySelector("b")
+          ?.textContent
+          .trim()
+      )
+      .filter(Boolean);
+
+
+  pendingChanges = [];
+
+
+  const parts =
+    input
+      .split(/[,\n]+/)
+      .map(x => x.trim())
+      .filter(Boolean);
+
+
+  for (const part of parts) {
+
+    const lower =
+      part.toLowerCase();
+
+
+    const name =
+      names.find(n =>
+        lower.startsWith(
+          n.toLowerCase()
+        )
+      );
+
+
+    if (!name)
+      continue;
+
+
+    const soldOut =
+      /sold\s*out|nahi|nahin|unavailable/i
+        .test(part);
+
+
+    const numbers =
+      part.match(
+        /\d+(?:\.\d+)?/g
+      ) || [];
+
+
+    if (soldOut) {
+
+      pendingChanges.push({
+
+        product_name: name,
+        is_available: false,
+        available_qty: 0
+
+      });
+
+    }
+
+    else if (numbers.length) {
+
+      pendingChanges.push({
+
+        product_name: name,
+        price: Number(numbers[0])
+
+      });
+
+    }
+
+  }
+
+
+  if (!pendingChanges.length) {
+
+    review.innerHTML = `
+
+      <p class="muted">
+
+        No changes understood.
+
+        Try:
+        Tomato 48,
+        Bhindi sold out,
+        Palak 20
+
+      </p>
+
+    `;
+
+    publish.style.display =
+      "none";
+
+    return;
+
+  }
+
+
+  review.innerHTML = `
+
+    <h3>Review</h3>
+
+    ${pendingChanges.map(change => `
+
+      <div class="row">
+
+        <b>
+          ${escapeHtml(
+            change.product_name
+          )}
+        </b>
+
+        <span>
+
+          ${
+            change.is_available === false
+
+            ? "Sold out"
+
+            : `Price → ${
+                money(change.price)
+              }`
+          }
+
+        </span>
+
+      </div>
+
+    `).join("")}
+
+  `;
+
+
+  publish.style.display =
+    "block";
+
+}
+
+
+async function publishDelta() {
+
+  const input =
+    document
+      .getElementById("deltaInput")
+      .value
+      .trim();
+
+  const msg =
+    document.getElementById(
+      "deltaMsg"
+    );
+
+
+  if (!pendingChanges.length)
+    return;
+
+
+  try {
+
+    msg.textContent =
+      "Publishing…";
+
+
+    const response =
+      await fetch(API, {
+
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body: JSON.stringify({
+
+          action:
+            "inventory_delta",
+
+          input_text:
+            input,
+
+          changes:
+            pendingChanges
+
+        })
+
+      });
+
+
+    const data =
+      await response.json();
+
+
+    if (!response.ok)
+      throw new Error(
+        data.error ||
+        "Could not publish changes"
+      );
+
+
+    msg.textContent =
+      "✓ Published. Customer inventory is updated.";
+
+
+    document.getElementById(
+      "deltaInput"
+    ).value = "";
+
+
+    document.getElementById(
+      "deltaReview"
+    ).innerHTML = "";
+
+
+    document.getElementById(
+      "publishDelta"
+    ).style.display =
+      "none";
+
+
+    pendingChanges = [];
+
+
+    await loadVendor();
+
+
+  } catch (error) {
+
+    msg.textContent =
+      error.message ||
+      "Could not publish changes.";
+
+  }
+
+}
+
+
+/* -----------------------------
+   ORDER STATUS
+----------------------------- */
+
+async function updateStatus(
+  orderId,
+  newStatus
+) {
+
+  try {
+
+    const response =
+      await fetch(API, {
+
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body: JSON.stringify({
+
+          action: "status",
+          order_id: orderId,
+          status: newStatus
+
+        })
+
+      });
+
+
+    const data =
+      await response.json();
+
+
+    if (!response.ok)
+      throw new Error(
+        data.error ||
+        "Could not update order"
+      );
+
+
+    await loadVendor();
+
+
+  } catch (error) {
+
+    alert(
+      error.message ||
+      "Could not update order."
+    );
+
+  }
+
+}
 
 let vendorRecorder = null;
 let vendorAudioChunks = [];
 let vendorRecording = false;
-let vendorTimer = null;
-let vendorSeconds = 0;
 
-Prevent duplicate MediaRecorder sessions.
-
---------------------------------------------------
-ERROR HANDLING
---------------------------------------------------
-
-Handle:
-
-- microphone permission denied
-- getUserMedia failure
-- MediaRecorder failure
-- empty recording
-- network failure
-- Supabase function error
-- invalid JSON response
-- empty transcript
-- transcription failure
-
-Errors should appear in:
-
-voiceStatus
-
-The UI must always recover so the user can press:
-
-🎙 Tap to speak
-
-again.
-
-Do not leave the microphone running after errors.
-
---------------------------------------------------
-IMPORTANT UX RULE
---------------------------------------------------
-
-Do NOT automatically publish inventory after transcription.
-
-Voice should only produce:
-
-audio
-→ transcript
-→ previewDelta()
-→ review
-
-The vendor must still review the interpreted changes before:
-
-Confirm & Publish.
-
---------------------------------------------------
-HINGLISH REQUIREMENT
---------------------------------------------------
-
-The vendor must be allowed to speak naturally, for example:
-
-"Tamatar pachaas rupaye, bhindi nahi hai, palak pachis rupaye, baaki same."
-
-Do NOT force unnatural phrases such as:
-
-"Tomato five zero."
-
-The frontend should preserve whatever transcript the backend returns.
-
-Do NOT implement frontend speech-to-text.
-
---------------------------------------------------
-IMPORTANT: SEPARATE TRANSCRIPTION FROM INTERPRETATION
---------------------------------------------------
-
-For this task, focus on reliable recording and transcription.
-
-Do not attempt a large rewrite of previewDelta().
-
-It is acceptable if transcription succeeds but the existing deterministic parser cannot yet understand:
-
-tamatar
-pachaas
-pachis
-
-That interpretation layer will be upgraded separately.
-
-We need to be able to distinguish:
-
-A. recording problem
-B. transcription problem
-C. interpretation problem
-
---------------------------------------------------
-PRESERVE CURRENT APPLICATION
---------------------------------------------------
-
-Do not remove or modify unrelated functionality.
-
-Especially preserve:
-
-loadVendor()
-previewDelta()
-publishDelta()
-updateStatus()
-inventory rendering
-order rendering
-customer navigation
-existing API URLs
-existing Supabase order/inventory functionality
-
-Make the minimum changes necessary.
-
---------------------------------------------------
-CODE QUALITY
---------------------------------------------------
-
-Remove obsolete SpeechRecognition code.
-
-Do not leave two competing voice implementations.
-
-Avoid duplicate global variables/functions.
-
-Make startVendorVoice() the single voice entry point used by:
-
-onclick="startVendorVoice()"
-
-Do not introduce external frontend libraries.
-
-Keep implementation suitable for GitHub Pages.
-
---------------------------------------------------
-TEST CONDITIONS
---------------------------------------------------
-
-After implementation the following should work:
-
-TEST 1 — recording duration
-
-Tap voice.
-
-Wait 3 seconds.
-
-Speak.
-
-Pause 2 seconds.
-
-Speak again.
-
-Pause.
-
-Recording MUST continue.
-
-Timer MUST continue.
-
-Only pressing Stop should end recording.
-
-TEST 2 — audio transcription
-
-Say:
-
-"Tomato fifty, Palak thirty."
-
-Expected:
-
-a transcript appears in deltaInput.
-
-TEST 3 — Hinglish
-
-Say naturally:
-
-"Tamatar pachaas rupaye, bhindi nahi hai, palak pachis rupaye, baaki same."
-
-Expected:
-
-the complete audio reaches the transcription backend and a transcript is returned.
-
-Do not judge previewDelta interpretation yet.
-
-TEST 4 — microphone cleanup
-
-After transcription completes, browser microphone recording indicator should stop.
-
-TEST 5 — second recording
-
-Vendor should immediately be able to make another recording.
-
---------------------------------------------------
-DELIVERABLE
---------------------------------------------------
-
-Modify vendor.html directly.
-
-Before finishing:
-
-1. Check for JavaScript syntax errors.
-2. Check that only one startVendorVoice() exists.
-3. Check that no SpeechRecognition implementation remains.
-4. Check that existing vendor functionality remains intact.
-5. Check microphone tracks are cleaned up.
-6. Check recording never auto-stops because of silence.
-7. Check the complete Blob is uploaded.
-8. Check transcript populates deltaInput.
-9. Check previewDelta() is called after successful transcription.
-
-Do not redesign the UI.
-
-Do not touch database schema.
-
-Do not modify working commerce/order logic.
-
-Implement the change completely.
+async function startVendorVoice() {
+  const status = document.getElementById("voiceStatus");
+  const button = document.getElementById("voiceDelta");
+
+  // Second click = stop recording and transcribe
+  if (vendorRecording && vendorRecorder) {
+    button.textContent = "⏳ Transcribing…";
+    status.textContent = "Understanding today's changes…";
+    vendorRecorder.stop();
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true
+    });
+
+    vendorAudioChunks = [];
+
+    const preferredType =
+      MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+
+    vendorRecorder = new MediaRecorder(stream, {
+      mimeType: preferredType
+    });
+
+    vendorRecorder.ondataavailable = event => {
+      if (event.data.size > 0) {
+        vendorAudioChunks.push(event.data);
+      }
+    };
+
+    vendorRecorder.onstop = async () => {
+      vendorRecording = false;
+      stream.getTracks().forEach(track => track.stop());
+
+      try {
+        const audioBlob = new Blob(vendorAudioChunks, {
+          type: vendorRecorder.mimeType
+        });
+
+        const form = new FormData();
+        form.append("file", audioBlob, "vendor-update.webm");
+
+        const response = await fetch(
+          "https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/voice-transcribe",
+          {
+            method: "POST",
+            body: form
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.detail || data.error || "Transcription failed"
+          );
+        }
+
+        const transcript = (data.transcript || "").trim();
+
+        if (!transcript) {
+          throw new Error("No speech was detected.");
+        }
+
+        document.getElementById("deltaInput").value = transcript;
+
+        status.textContent = `Heard: "${transcript}"`;
+        button.textContent = "🎙 Tap to speak";
+
+        previewDelta();
+
+      } catch (error) {
+        status.textContent = `Voice error: ${error.message}`;
+        button.textContent = "🎙 Tap to speak";
+      }
+    };
+
+    vendorRecorder.start();
+    vendorRecording = true;
+
+    button.textContent = "⏹ Stop & understand";
+    status.textContent =
+      "Listening… Speak naturally, then tap stop.";
+
+  } catch (error) {
+    vendorRecording = false;
+    button.textContent = "🎙 Tap to speak";
+    status.textContent =
+      `Microphone error: ${error.message}`;
+  }
+}

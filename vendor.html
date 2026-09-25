@@ -37,7 +37,16 @@
       style="width:100%;box-sizing:border-box;margin:10px 0;"
       placeholder="Example: Tomato 48, Bhindi sold out, Palak 20"
     ></textarea>
+<button
+  id="voiceDelta"
+  class="btn full"
+  style="margin-bottom:10px;"
+  onclick="startVendorVoice()"
+>
+  🎙 Tap to speak
+</button>
 
+<p id="voiceStatus" class="muted"></p>
     <button
       class="btn full"
       onclick="previewDelta()"
@@ -761,7 +770,67 @@ async function updateStatus(
 
 }
 
+function startVendorVoice() {
 
+  const SpeechRecognition =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
+
+  const status =
+    document.getElementById("voiceStatus");
+
+  const button =
+    document.getElementById("voiceDelta");
+
+  if (!SpeechRecognition) {
+    status.textContent =
+      "Voice isn't supported in this browser. Type the update instead.";
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+
+  recognition.lang = "en-IN";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  button.textContent = "🎙 Listening…";
+  status.textContent = "Speak today's changes naturally.";
+
+  recognition.onresult = event => {
+
+    const transcript =
+      event.results[0][0].transcript;
+
+    document.getElementById(
+      "deltaInput"
+    ).value = transcript;
+
+    status.textContent =
+      `Heard: "${transcript}"`;
+
+    button.textContent =
+      "🎙 Tap to speak";
+
+    previewDelta();
+  };
+
+  recognition.onerror = event => {
+
+    status.textContent =
+      `Voice error: ${event.error}`;
+
+    button.textContent =
+      "🎙 Tap to speak";
+  };
+
+  recognition.onend = () => {
+    button.textContent =
+      "🎙 Tap to speak";
+  };
+
+  recognition.start();
+}
 /* -----------------------------
    START
 ----------------------------- */

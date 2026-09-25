@@ -8,7 +8,6 @@
 </head>
 
 <body>
-
 <main>
 
   <div class="top">
@@ -22,6 +21,50 @@
     Pack orders. Deliver. Keep today's stock accurate.
   </p>
 
+  <!-- MORNING UPDATE -->
+
+  <section class="card">
+
+    <h2>What's different today?</h2>
+
+    <p class="muted">
+      Only tell us what changed. Everything else stays the same.
+    </p>
+
+    <textarea
+      id="deltaInput"
+      rows="3"
+      style="width:100%;box-sizing:border-box;margin:10px 0;"
+      placeholder="Example: Tomato 48, Bhindi sold out, Palak 20"
+    ></textarea>
+
+    <button
+      class="btn full"
+      onclick="previewDelta()"
+    >
+      Review changes
+    </button>
+
+    <div id="deltaReview"></div>
+
+    <button
+      id="publishDelta"
+      class="btn full"
+      style="display:none;margin-top:10px;"
+      onclick="publishDelta()"
+    >
+      Confirm & publish
+    </button>
+
+    <p
+      id="deltaMsg"
+      class="muted"
+    ></p>
+
+  </section>
+
+
+  <!-- ORDERS -->
 
   <section class="card">
 
@@ -35,6 +78,8 @@
 
   </section>
 
+
+  <!-- INVENTORY -->
 
   <section class="card">
 
@@ -58,8 +103,7 @@
 const API =
   "https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/vendor-api";
 
-
-const money = (n) =>
+const money = n =>
   `₹${Number(n || 0).toFixed(0)}`;
 
 
@@ -75,6 +119,10 @@ function escapeHtml(value) {
 }
 
 
+/* -----------------------------
+   LOAD VENDOR
+----------------------------- */
+
 async function loadVendor() {
 
   const response =
@@ -85,17 +133,19 @@ async function loadVendor() {
 
   if (!response.ok)
     throw new Error(
-      data.error || "Could not load vendor desk"
+      data.error ||
+      "Could not load vendor desk"
     );
 
   renderOrders(data.orders || []);
-
-  renderInventory(
-    data.inventory || []
-  );
+  renderInventory(data.inventory || []);
 
 }
 
+
+/* -----------------------------
+   ORDERS
+----------------------------- */
 
 function renderOrders(orders) {
 
@@ -125,37 +175,45 @@ function renderOrders(orders) {
   box.innerHTML =
     orders.map(order => {
 
-
       const customer =
         order.customers || {};
 
 
       const items =
         (order.order_items || [])
-        .map(item => {
+        .map(item => `
 
-          const product =
-            item.products || {};
+          <div class="row">
 
-          return `
-            <div class="row">
-              <span>
-                ${escapeHtml(item.product_name)}
-                ×
-                ${escapeHtml(item.quantity)}
-                ${escapeHtml(item.unit || "")}
-              </span>
+            <span>
 
-              <b>
-                ${money(
-                  Number(item.quantity) *
-                  Number(item.unit_price)
-                )}
-              </b>
-            </div>
-          `;
+              ${escapeHtml(
+                item.product_name
+              )}
 
-        })
+              ×
+
+              ${escapeHtml(
+                item.quantity
+              )}
+
+              ${escapeHtml(
+                item.unit || ""
+              )}
+
+            </span>
+
+            <b>
+              ${money(
+                item.line_total ??
+                Number(item.quantity) *
+                Number(item.unit_price)
+              )}
+            </b>
+
+          </div>
+
+        `)
         .join("");
 
 
@@ -168,6 +226,7 @@ function renderOrders(orders) {
       ) {
 
         action = `
+
           <button
             class="btn full"
             onclick="updateStatus(
@@ -177,6 +236,7 @@ function renderOrders(orders) {
           >
             Packed
           </button>
+
         `;
 
       }
@@ -185,6 +245,7 @@ function renderOrders(orders) {
       if (order.status === "packed") {
 
         action = `
+
           <button
             class="btn full"
             onclick="updateStatus(
@@ -194,6 +255,7 @@ function renderOrders(orders) {
           >
             Delivered
           </button>
+
         `;
 
       }
@@ -262,19 +324,19 @@ function renderOrders(orders) {
             <b>Total</b>
 
             <b>
-              ${money(
-                order.total
-              )}
+              ${money(order.total)}
             </b>
 
           </div>
 
 
           <p class="muted">
+
             Payment:
             ${escapeHtml(
               order.payment_method || ""
             )}
+
           </p>
 
 
@@ -289,6 +351,10 @@ function renderOrders(orders) {
 }
 
 
+/* -----------------------------
+   INVENTORY
+----------------------------- */
+
 function renderInventory(inventory) {
 
   const box =
@@ -299,10 +365,11 @@ function renderInventory(inventory) {
 
   if (!inventory.length) {
 
-    box.innerHTML =
-      `<p class="muted">
+    box.innerHTML = `
+      <p class="muted">
         No inventory found.
-      </p>`;
+      </p>
+    `;
 
     return;
 
@@ -328,7 +395,7 @@ function renderInventory(inventory) {
 
             <b>
               ${escapeHtml(
-                item.product_name
+                product.canonical_name
               )}
             </b>
 
@@ -337,7 +404,7 @@ function renderInventory(inventory) {
               ${money(row.price)}
               /
               ${escapeHtml(
-                item.unit || ""
+                product.default_unit || ""
               )}
 
             </div>
@@ -349,12 +416,12 @@ function renderInventory(inventory) {
 
             ${
               available
-              ?
-              `${escapeHtml(
-                row.available_qty
-              )} available`
-              :
-              "Sold out"
+
+              ? `${escapeHtml(
+                  row.available_qty
+                )} available`
+
+              : "Sold out"
             }
 
           </div>
@@ -367,6 +434,279 @@ function renderInventory(inventory) {
 
 }
 
+
+/* -----------------------------
+   MORNING UPDATE
+----------------------------- */
+
+let pendingChanges = [];
+
+
+function previewDelta() {
+
+  const input =
+    document
+      .getElementById("deltaInput")
+      .value
+      .trim();
+
+  const review =
+    document.getElementById(
+      "deltaReview"
+    );
+
+  const publish =
+    document.getElementById(
+      "publishDelta"
+    );
+
+  const inventoryRows =
+    [...document.querySelectorAll(
+      "#inventory .row"
+    )];
+
+  const names =
+    inventoryRows
+      .map(row =>
+        row.querySelector("b")
+          ?.textContent
+          .trim()
+      )
+      .filter(Boolean);
+
+
+  pendingChanges = [];
+
+
+  const parts =
+    input
+      .split(/[,\n]+/)
+      .map(x => x.trim())
+      .filter(Boolean);
+
+
+  for (const part of parts) {
+
+    const lower =
+      part.toLowerCase();
+
+
+    const name =
+      names.find(n =>
+        lower.startsWith(
+          n.toLowerCase()
+        )
+      );
+
+
+    if (!name)
+      continue;
+
+
+    const soldOut =
+      /sold\s*out|nahi|nahin|unavailable/i
+        .test(part);
+
+
+    const numbers =
+      part.match(
+        /\d+(?:\.\d+)?/g
+      ) || [];
+
+
+    if (soldOut) {
+
+      pendingChanges.push({
+
+        product_name: name,
+        is_available: false,
+        available_qty: 0
+
+      });
+
+    }
+
+    else if (numbers.length) {
+
+      pendingChanges.push({
+
+        product_name: name,
+        price: Number(numbers[0])
+
+      });
+
+    }
+
+  }
+
+
+  if (!pendingChanges.length) {
+
+    review.innerHTML = `
+
+      <p class="muted">
+
+        No changes understood.
+
+        Try:
+        Tomato 48,
+        Bhindi sold out,
+        Palak 20
+
+      </p>
+
+    `;
+
+    publish.style.display =
+      "none";
+
+    return;
+
+  }
+
+
+  review.innerHTML = `
+
+    <h3>Review</h3>
+
+    ${pendingChanges.map(change => `
+
+      <div class="row">
+
+        <b>
+          ${escapeHtml(
+            change.product_name
+          )}
+        </b>
+
+        <span>
+
+          ${
+            change.is_available === false
+
+            ? "Sold out"
+
+            : `Price → ${
+                money(change.price)
+              }`
+          }
+
+        </span>
+
+      </div>
+
+    `).join("")}
+
+  `;
+
+
+  publish.style.display =
+    "block";
+
+}
+
+
+async function publishDelta() {
+
+  const input =
+    document
+      .getElementById("deltaInput")
+      .value
+      .trim();
+
+  const msg =
+    document.getElementById(
+      "deltaMsg"
+    );
+
+
+  if (!pendingChanges.length)
+    return;
+
+
+  try {
+
+    msg.textContent =
+      "Publishing…";
+
+
+    const response =
+      await fetch(API, {
+
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body: JSON.stringify({
+
+          action:
+            "inventory_delta",
+
+          input_text:
+            input,
+
+          changes:
+            pendingChanges
+
+        })
+
+      });
+
+
+    const data =
+      await response.json();
+
+
+    if (!response.ok)
+      throw new Error(
+        data.error ||
+        "Could not publish changes"
+      );
+
+
+    msg.textContent =
+      "✓ Published. Customer inventory is updated.";
+
+
+    document.getElementById(
+      "deltaInput"
+    ).value = "";
+
+
+    document.getElementById(
+      "deltaReview"
+    ).innerHTML = "";
+
+
+    document.getElementById(
+      "publishDelta"
+    ).style.display =
+      "none";
+
+
+    pendingChanges = [];
+
+
+    await loadVendor();
+
+
+  } catch (error) {
+
+    msg.textContent =
+      error.message ||
+      "Could not publish changes.";
+
+  }
+
+}
+
+
+/* -----------------------------
+   ORDER STATUS
+----------------------------- */
 
 async function updateStatus(
   orderId,
@@ -388,9 +728,7 @@ async function updateStatus(
         body: JSON.stringify({
 
           action: "status",
-
           order_id: orderId,
-
           status: newStatus
 
         })
@@ -423,6 +761,10 @@ async function updateStatus(
 
 }
 
+
+/* -----------------------------
+   START
+----------------------------- */
 
 loadVendor().catch(error => {
 

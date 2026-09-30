@@ -451,169 +451,96 @@ function renderInventory(inventory) {
 let pendingChanges = [];
 
 
-function previewDelta() {
+async function previewDelta() {
 
   const input =
-    document
-      .getElementById("deltaInput")
-      .value
-      .trim();
+    document.getElementById("deltaInput").value.trim();
 
   const review =
-    document.getElementById(
-      "deltaReview"
-    );
+    document.getElementById("deltaReview");
 
   const publish =
-    document.getElementById(
-      "publishDelta"
-    );
+    document.getElementById("publishDelta");
 
-  const inventoryRows =
-    [...document.querySelectorAll(
-      "#inventory .row"
-    )];
-
-  const names =
-    inventoryRows
-      .map(row =>
-        row.querySelector("b")
-          ?.textContent
-          .trim()
-      )
-      .filter(Boolean);
-
+  const msg =
+    document.getElementById("deltaMsg");
 
   pendingChanges = [];
+  publish.style.display = "none";
 
-
-  const parts =
-    input
-      .split(/[,\n]+/)
-      .map(x => x.trim())
-      .filter(Boolean);
-
-
-  for (const part of parts) {
-
-    const lower =
-      part.toLowerCase();
-
-
-    const name =
-      names.find(n =>
-        lower.startsWith(
-          n.toLowerCase()
-        )
-      );
-
-
-    if (!name)
-      continue;
-
-
-    const soldOut =
-      /sold\s*out|nahi|nahin|unavailable/i
-        .test(part);
-
-
-    const numbers =
-      part.match(
-        /\d+(?:\.\d+)?/g
-      ) || [];
-
-
-    if (soldOut) {
-
-      pendingChanges.push({
-
-        product_name: name,
-        is_available: false,
-        available_qty: 0
-
-      });
-
-    }
-
-    else if (numbers.length) {
-
-      pendingChanges.push({
-
-        product_name: name,
-        price: Number(numbers[0])
-
-      });
-
-    }
-
+  if (!input) {
+    review.innerHTML = '<p class="muted">Speak or type today\'s changes first.</p>';
+    return;
   }
 
+  review.innerHTML = '<p class="muted">Understanding today\'s changes…</p>';
+  msg.textContent = "";
 
-  if (!pendingChanges.length) {
+  try {
+    const response = await fetch(
+      "https://upnuuqoccdnwzgkrugto.supabase.co/functions/v1/inventory-interpret",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: input })
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok)
+      throw new Error(data.detail || data.error || "Could not understand changes");
+
+    pendingChanges = (data.changes || []).map(change => {
+      const out = { product_name: change.product_name };
+      if (change.price !== null && change.price !== undefined) out.price = Number(change.price);
+      if (change.is_available !== null && change.is_available !== undefined) out.is_available = Boolean(change.is_available);
+      if (change.available_qty !== null && change.available_qty !== undefined) out.available_qty = Number(change.available_qty);
+      return out;
+    });
+
+    const uncertain = data.uncertain || [];
+
+    if (!pendingChanges.length) {
+      review.innerHTML = `
+        <p class="muted">No safe changes understood. Nothing will be published.</p>
+        ${uncertain.length ? `<div class="card"><b>Please check:</b><p class="muted">${uncertain.map(escapeHtml).join("<br>")}</p></div>` : ""}
+      `;
+      return;
+    }
 
     review.innerHTML = `
-
-      <p class="muted">
-
-        No changes understood.
-
-        Try:
-        Tomato 48,
-        Bhindi sold out,
-        Palak 20
-
-      </p>
-
+      <h3>Review before publishing</h3>
+      ${pendingChanges.map(change => `
+        <div class="row">
+          <b>${escapeHtml(change.product_name)}</b>
+          <span>
+            ${change.is_available === false
+              ? "Sold out"
+              : change.price !== undefined
+                ? `Price → ${money(change.price)}`
+                : change.available_qty !== undefined
+                  ? `Stock → ${escapeHtml(change.available_qty)}`
+                  : "Change detected"}
+          </span>
+        </div>
+      `).join("")}
+      ${uncertain.length ? `
+        <div class="card" style="margin-top:10px;">
+          <b>Needs your attention</b>
+          <p class="muted">${uncertain.map(escapeHtml).join("<br>")}</p>
+        </div>
+      ` : ""}
+      <p class="muted">AI only proposed these changes. Nothing changes until you press Confirm & publish.</p>
     `;
 
-    publish.style.display =
-      "none";
+    publish.style.display = "block";
 
-    return;
-
+  } catch (error) {
+    review.innerHTML = '<p class="muted">Could not interpret this update.</p>';
+    msg.textContent = error.message || "Could not understand changes.";
   }
-
-
-  review.innerHTML = `
-
-    <h3>Review</h3>
-
-    ${pendingChanges.map(change => `
-
-      <div class="row">
-
-        <b>
-          ${escapeHtml(
-            change.product_name
-          )}
-        </b>
-
-        <span>
-
-          ${
-            change.is_available === false
-
-            ? "Sold out"
-
-            : `Price → ${
-                money(change.price)
-              }`
-          }
-
-        </span>
-
-      </div>
-
-    `).join("")}
-
-  `;
-
-
-  publish.style.display =
-    "block";
-
 }
-
 
 async function publishDelta() {
 
